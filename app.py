@@ -22,39 +22,68 @@ def send(chat_id, text, reply_markup=None):
     data = {"chat_id": chat_id, "text": text}
     if reply_markup:
         data["reply_markup"] = reply_markup
-    requests.post(f"{BASE_URL}/sendMessage", json=data)
+    try:
+        requests.post(f"{BASE_URL}/sendMessage", json=data, timeout=10)
+    except:
+        pass
 
-# ---------------- قیمت واقعی‌تر ----------------
+# ---------------- قیمت پایدار ----------------
 def get_price():
     try:
-        r = requests.get(
-            "https://api.exchangerate.host/latest?base=USD&symbols=IRR",
-            timeout=10
-        ).json()
+        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10).json()
+
+        if "rates" not in r:
+            return None
 
         dollar = r["rates"]["IRR"]
 
-        gold = (2350 * dollar / 31.1) * 0.75
-        coin = gold * 8.133
+        gold_18 = (2350 * dollar / 31.1) * 0.75
 
-        return int(coin)
+        full = gold_18 * 8.133
+        half = full / 2
+        quarter = full / 4
+
+        return {
+            "gold": int(gold_18),
+            "dollar": int(dollar),
+            "full": int(full),
+            "half": int(half),
+            "quarter": int(quarter)
+        }
+
     except:
         return None
 
 # ---------------- ذخیره ----------------
 def save(price):
-    cursor.execute(
-        "INSERT INTO prices VALUES (?,?)",
-        (datetime.now().isoformat(), price)
-    )
-    conn.commit()
+    try:
+        cursor.execute(
+            "INSERT INTO prices VALUES (?,?)",
+            (datetime.now().isoformat(), price)
+        )
+        conn.commit()
+    except:
+        pass
 
 # ---------------- load ----------------
 def load():
     cursor.execute("SELECT price FROM prices")
     return [x[0] for x in cursor.fetchall()]
 
-# ---------------- AI ----------------
+# ---------------- حباب ----------------
+def bubble(p):
+    try:
+        real = p["gold"] * 8.133
+
+        return {
+            "full": round(((p["full"] - real) / real) * 100, 2),
+            "half": round(((p["half"] - real/2) / (real/2)) * 100, 2),
+            "quarter": round(((p["quarter"] - real/4) / (real/4)) * 100, 2)
+        }
+    except:
+        return None
+
+# ---------------- AI ساده ولی پایدار ----------------
 def predict():
     data = load()
 
@@ -78,25 +107,18 @@ def signal(current, pred):
     diff = pred - current
 
     if diff > 700000:
-        return "🔴 ریسک بالا - احتمال اصلاح"
+        return "🔴 ریسک بالا (احتمال اصلاح)"
     elif diff < -700000:
         return "🟢 فرصت خرید"
     else:
         return "🟡 بازار نرمال"
 
-# ---------------- خودکارسازی دیتا ----------------
-def auto_update():
-    p = get_price()
-    if p:
-        save(p)
-    return p
-
 # ---------------- کیبورد ----------------
 def keyboard():
     return {
         "keyboard": [
-            ["📊 قیمت", "🤖 تحلیل AI"],
-            ["📈 وضعیت"]
+            ["📊 قیمت", "📉 حباب"],
+            ["🤖 تحلیل AI"]
         ],
         "resize_keyboard": True
     }
@@ -112,50 +134,80 @@ def webhook():
 
         # start
         if text == "/start":
-            send(chat_id, "🤖 ربات فرزاد گلد (Auto AI) فعال شد", keyboard())
+            send(chat_id, "🤖 ربات نهایی فرزاد گلد فعال شد", keyboard())
 
-        # قیمت (خودکار ذخیره می‌شود)
+        # قیمت
         elif text == "📊 قیمت":
-            p = auto_update()
+            p = get_price()
 
             if not p:
                 send(chat_id, "❌ خطا در دریافت قیمت")
                 return "OK"
 
-            send(chat_id, f"💰 قیمت سکه: {p:,}")
+            save(p["full"])
+
+            send(chat_id,
+                f"""
+💰 طلا ۱۸: {p['gold']:,}
+💵 دلار: {p['dollar']:,}
+
+🪙 سکه:
+تمام: {p['full']:,}
+نیم: {p['half']:,}
+ربع: {p['quarter']:,}
+"""
+            )
+
+        # حباب
+        elif text == "📉 حباب":
+            p = get_price()
+
+            if not p:
+                send(chat_id, "❌ خطا در دریافت قیمت")
+                return "OK"
+
+            b = bubble(p)
+
+            if not b:
+                send(chat_id, "❌ خطا در محاسبه حباب")
+                return "OK"
+
+            send(chat_id,
+                f"""
+📊 حباب بازار:
+
+🪙 تمام: {b['full']}%
+🥈 نیم: {b['half']}%
+🥉 ربع: {b['quarter']}%
+"""
+            )
 
         # AI تحلیل
         elif text == "🤖 تحلیل AI":
-            current = auto_update()
+            current = get_price()
 
             if not current:
                 send(chat_id, "❌ خطا در دریافت قیمت")
                 return "OK"
 
+            save(current["full"])
+
             pred, trend = predict()
 
             if not pred:
-                send(chat_id, "📊 هنوز داده کافی نیست (حداقل 5 بار قیمت بگیر)")
+                send(chat_id, "📊 حداقل 5 بار قیمت بگیر تا AI فعال شود")
                 return "OK"
 
             send(chat_id,
                 f"""
 🤖 تحلیل هوشمند:
 
-📊 فعلی: {current:,}
+📊 فعلی: {current['full']:,}
 🔮 پیش‌بینی: {pred:,}
 
 📈 روند: {trend}
-💡 سیگنال: {signal(current, pred)}
+💡 سیگنال: {signal(current['full'], pred)}
 """
-            )
-
-        # وضعیت دیتا
-        elif text == "📈 وضعیت":
-            data = load()
-            send(chat_id,
-                f"📊 تعداد داده‌ها: {len(data)}\n"
-                f"آخرین قیمت: {data[-1] if data else 'نداریم'}"
             )
 
     return "OK"

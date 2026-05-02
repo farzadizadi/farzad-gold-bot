@@ -3,7 +3,6 @@ import requests
 import os
 import sqlite3
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from datetime import datetime
 
@@ -25,7 +24,7 @@ def send(chat_id, text, reply_markup=None):
         data["reply_markup"] = reply_markup
     requests.post(f"{BASE_URL}/sendMessage", json=data)
 
-# ---------------- Price ----------------
+# ---------------- قیمت واقعی‌تر ----------------
 def get_price():
     try:
         r = requests.get(
@@ -34,6 +33,7 @@ def get_price():
         ).json()
 
         dollar = r["rates"]["IRR"]
+
         gold = (2350 * dollar / 31.1) * 0.75
         coin = gold * 8.133
 
@@ -41,7 +41,7 @@ def get_price():
     except:
         return None
 
-# ---------------- Save ----------------
+# ---------------- ذخیره ----------------
 def save(price):
     cursor.execute(
         "INSERT INTO prices VALUES (?,?)",
@@ -49,12 +49,12 @@ def save(price):
     )
     conn.commit()
 
-# ---------------- Load ----------------
+# ---------------- load ----------------
 def load():
     cursor.execute("SELECT price FROM prices")
     return [x[0] for x in cursor.fetchall()]
 
-# ---------------- AI Prediction ----------------
+# ---------------- AI ----------------
 def predict():
     data = load()
 
@@ -73,7 +73,7 @@ def predict():
 
     return int(pred), trend
 
-# ---------------- Signal ----------------
+# ---------------- سیگنال ----------------
 def signal(current, pred):
     diff = pred - current
 
@@ -84,45 +84,24 @@ def signal(current, pred):
     else:
         return "🟡 بازار نرمال"
 
-# ---------------- Chart ----------------
-def chart():
-    data = load()
+# ---------------- خودکارسازی دیتا ----------------
+def auto_update():
+    p = get_price()
+    if p:
+        save(p)
+    return p
 
-    if len(data) < 3:
-        return None
-
-    plt.plot(data, marker="o")
-    plt.title("Farzad Gold Trend")
-    plt.savefig("chart.png")
-    plt.close()
-
-    return "chart.png"
-
-# ---------------- Keyboard ----------------
+# ---------------- کیبورد ----------------
 def keyboard():
     return {
         "keyboard": [
             ["📊 قیمت", "🤖 تحلیل AI"],
-            ["📈 نمودار", "🚨 هشدار"]
+            ["📈 وضعیت"]
         ],
         "resize_keyboard": True
     }
 
-# ---------------- Home (Dashboard) ----------------
-@app.route("/")
-def home():
-    data = load()
-
-    if not data:
-        return "Bot is running - no data yet"
-
-    return f"""
-    <h1>🔥 Farzad Gold AI Dashboard</h1>
-    <p>Last Price: {data[-1]}</p>
-    <p>Records: {len(data)}</p>
-    """
-
-# ---------------- Webhook ----------------
+# ---------------- webhook ----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -133,67 +112,54 @@ def webhook():
 
         # start
         if text == "/start":
-            send(chat_id, "🤖 ربات نهایی فرزاد گلد فعال شد", keyboard())
+            send(chat_id, "🤖 ربات فرزاد گلد (Auto AI) فعال شد", keyboard())
 
-        # price
+        # قیمت (خودکار ذخیره می‌شود)
         elif text == "📊 قیمت":
-            p = get_price()
+            p = auto_update()
+
             if not p:
-                send(chat_id, "❌ خطا")
+                send(chat_id, "❌ خطا در دریافت قیمت")
                 return "OK"
 
-            save(p)
             send(chat_id, f"💰 قیمت سکه: {p:,}")
 
-        # AI
+        # AI تحلیل
         elif text == "🤖 تحلیل AI":
-            current = get_price()
-            save(current)
+            current = auto_update()
+
+            if not current:
+                send(chat_id, "❌ خطا در دریافت قیمت")
+                return "OK"
 
             pred, trend = predict()
 
             if not pred:
-                send(chat_id, "📊 داده کافی نیست (حداقل 5 داده لازم است)")
+                send(chat_id, "📊 هنوز داده کافی نیست (حداقل 5 بار قیمت بگیر)")
                 return "OK"
 
             send(chat_id,
                 f"""
-🤖 تحلیل نهایی:
+🤖 تحلیل هوشمند:
 
 📊 فعلی: {current:,}
 🔮 پیش‌بینی: {pred:,}
 
 📈 روند: {trend}
 💡 سیگنال: {signal(current, pred)}
-""")
+"""
+            )
 
-        # chart
-        elif text == "📈 نمودار":
-            file = chart()
-
-            if file:
-                with open(file, "rb") as f:
-                    requests.post(
-                        f"{BASE_URL}/sendPhoto",
-                        data={"chat_id": chat_id},
-                        files={"photo": f}
-                    )
-
-        # alert
-        elif text == "🚨 هشدار":
-            current = get_price()
-            pred, _ = predict()
-
-            if pred:
-                diff = abs(pred - current)
-
-                if diff > 800000:
-                    send(chat_id, "🚨 نوسان شدید بازار")
-                else:
-                    send(chat_id, "✅ بازار پایدار")
+        # وضعیت دیتا
+        elif text == "📈 وضعیت":
+            data = load()
+            send(chat_id,
+                f"📊 تعداد داده‌ها: {len(data)}\n"
+                f"آخرین قیمت: {data[-1] if data else 'نداریم'}"
+            )
 
     return "OK"
 
-# ---------------- Run ----------------
+# ---------------- run ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)

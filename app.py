@@ -17,6 +17,9 @@ cursor = conn.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS prices (time TEXT, price REAL)")
 conn.commit()
 
+# ---------------- cache آخرین قیمت ----------------
+last_cache = None
+
 # ---------------- Telegram ----------------
 def send(chat_id, text, reply_markup=None):
     data = {"chat_id": chat_id, "text": text}
@@ -27,32 +30,48 @@ def send(chat_id, text, reply_markup=None):
     except:
         pass
 
-# ---------------- قیمت پایدار ----------------
+# ---------------- قیمت چندمنبعی واقعی ----------------
 def get_price():
-    try:
-        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10).json()
+    global last_cache
 
-        if "rates" not in r:
-            return None
+    sources = [
+        "https://open.er-api.com/v6/latest/USD",
+        "https://api.exchangerate.host/latest?base=USD&symbols=IRR"
+    ]
 
-        dollar = r["rates"]["IRR"]
+    dollar = None
 
-        gold_18 = (2350 * dollar / 31.1) * 0.75
+    for url in sources:
+        try:
+            r = requests.get(url, timeout=10).json()
+            rates = r.get("rates", {})
+            dollar = rates.get("IRR")
 
-        full = gold_18 * 8.133
-        half = full / 2
-        quarter = full / 4
+            if dollar:
+                break
+        except:
+            continue
 
-        return {
-            "gold": int(gold_18),
-            "dollar": int(dollar),
-            "full": int(full),
-            "half": int(half),
-            "quarter": int(quarter)
-        }
-
-    except:
+    # اگر هیچ API جواب نداد → از cache استفاده کن
+    if not dollar:
+        if last_cache:
+            return last_cache
         return None
+
+    gold = (2350 * dollar / 31.1) * 0.75
+
+    full = gold * 8.133
+
+    result = {
+        "gold": int(gold),
+        "dollar": int(dollar),
+        "full": int(full),
+        "half": int(full / 2),
+        "quarter": int(full / 4)
+    }
+
+    last_cache = result
+    return result
 
 # ---------------- ذخیره ----------------
 def save(price):
@@ -83,7 +102,7 @@ def bubble(p):
     except:
         return None
 
-# ---------------- AI ساده ولی پایدار ----------------
+# ---------------- AI ----------------
 def predict():
     data = load()
 
@@ -107,11 +126,11 @@ def signal(current, pred):
     diff = pred - current
 
     if diff > 700000:
-        return "🔴 ریسک بالا (احتمال اصلاح)"
+        return "🔴 ریسک بالا"
     elif diff < -700000:
         return "🟢 فرصت خرید"
     else:
-        return "🟡 بازار نرمال"
+        return "🟡 نرمال"
 
 # ---------------- کیبورد ----------------
 def keyboard():
@@ -130,18 +149,18 @@ def webhook():
 
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+        text = data["message"].get("text", "").strip()
 
         # start
         if text == "/start":
-            send(chat_id, "🤖 ربات نهایی فرزاد گلد فعال شد", keyboard())
+            send(chat_id, "🤖 ربات نهایی پایدار فعال شد", keyboard())
 
         # قیمت
         elif text == "📊 قیمت":
             p = get_price()
 
             if not p:
-                send(chat_id, "❌ خطا در دریافت قیمت")
+                send(chat_id, "❌ قیمت در دسترس نیست (حتی cache)")
                 return "OK"
 
             save(p["full"])
@@ -163,7 +182,7 @@ def webhook():
             p = get_price()
 
             if not p:
-                send(chat_id, "❌ خطا در دریافت قیمت")
+                send(chat_id, "❌ قیمت در دسترس نیست")
                 return "OK"
 
             b = bubble(p)
@@ -174,7 +193,7 @@ def webhook():
 
             send(chat_id,
                 f"""
-📊 حباب بازار:
+📊 حباب:
 
 🪙 تمام: {b['full']}%
 🥈 نیم: {b['half']}%
@@ -182,12 +201,12 @@ def webhook():
 """
             )
 
-        # AI تحلیل
+        # AI
         elif text == "🤖 تحلیل AI":
             current = get_price()
 
             if not current:
-                send(chat_id, "❌ خطا در دریافت قیمت")
+                send(chat_id, "❌ قیمت در دسترس نیست")
                 return "OK"
 
             save(current["full"])
@@ -195,12 +214,12 @@ def webhook():
             pred, trend = predict()
 
             if not pred:
-                send(chat_id, "📊 حداقل 5 بار قیمت بگیر تا AI فعال شود")
+                send(chat_id, "📊 حداقل 5 داده لازم است")
                 return "OK"
 
             send(chat_id,
                 f"""
-🤖 تحلیل هوشمند:
+🤖 تحلیل:
 
 📊 فعلی: {current['full']:,}
 🔮 پیش‌بینی: {pred:,}

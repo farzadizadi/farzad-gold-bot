@@ -5,6 +5,8 @@ app = Flask(__name__)
 
 import os
 TOKEN = os.environ.get("TOKEN")
+if TOKEN is None:
+    print("❌ TOKEN NOT LOADED")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
 def send_message(chat_id, text):

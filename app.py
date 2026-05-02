@@ -3,7 +3,8 @@ import requests
 
 app = Flask(__name__)
 
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+import os
+TOKEN = os.environ.get("TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
 def send_message(chat_id, text):
